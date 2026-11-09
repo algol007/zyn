@@ -232,11 +232,34 @@ type InferObject<T extends Record<string, ZynType<any>>> = {
   [K in keyof T]: T[K] extends ZynType<infer U> ? U : never;
 };
 
+type MergeShapes<
+  A extends Record<string, ZynType<any>>,
+  B extends Record<string, ZynType<any>>,
+> = {
+  [K in keyof A | keyof B]: K extends keyof B
+    ? B[K]
+    : K extends keyof A
+      ? A[K]
+      : never;
+};
+
 export class ZynObject<T extends Record<string, ZynType<any>>> extends ZynType<
   InferObject<T>
 > {
-  constructor(private shape: T) {
+  constructor(readonly shape: T) {
     super();
+  }
+
+  extend<U extends Record<string, ZynType<any>>>(
+    shape: U,
+  ): ZynObject<MergeShapes<T, U>> {
+    return new ZynObject({ ...this.shape, ...shape } as MergeShapes<T, U>);
+  }
+
+  merge<U extends Record<string, ZynType<any>>>(
+    other: ZynObject<U>,
+  ): ZynObject<MergeShapes<T, U>> {
+    return this.extend(other.shape);
   }
 
   parse(data: unknown): InferObject<T> {
