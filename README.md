@@ -119,6 +119,57 @@ Order.parse({ id: 1, customer: { name: 5 } });
 // throws: At key "customer": At key "name": Expected string, received number
 ```
 
+## .extend(shape)
+
+Available on object schemas. Returns a new object schema with the fields of `shape` added. The original schema is unchanged.
+
+```
+const Base = zyn.object({
+  id: zyn.string(),
+  createdAt: zyn.string(),
+});
+
+const User = Base.extend({ name: zyn.string().min(2) });
+
+type User = Infer<typeof User>;
+// { id: string; createdAt: string; name: string }
+```
+
+If a key already exists, the new schema replaces it.
+
+```
+const NumericId = Base.extend({ id: zyn.number() });
+NumericId.parse({ id: 1, createdAt: '2026-01-01' });   // ok
+```
+
+The shape of an object schema is available as `.shape`, so you can reuse a single field.
+
+```
+User.shape.name.parse('Ada');   // 'Ada'
+```
+
+`.optional()`, `.default()` and `.refine()` set on the original object are not carried over. Call them again on the result if you need them.
+
+## .merge(schema)
+
+Available on object schemas. Returns a new object schema that combines the fields of both schemas. Neither original is changed. `A.merge(B)` is the same as `A.extend(B.shape)`.
+
+```
+const Timestamps = zyn.object({
+  createdAt: zyn.string(),
+  updatedAt: zyn.string(),
+});
+
+const Post = zyn.object({ title: zyn.string() }).merge(Timestamps);
+
+type Post = Infer<typeof Post>;
+// { title: string; createdAt: string; updatedAt: string }
+```
+
+If a key exists in both, the field from `schema` wins.
+
+`.optional()`, `.default()` and `.refine()` set on either object are not carried over. Call them again on the result if you need them.
+
 ## .optional()
 
 Available on every schema. An optional schema also accepts `undefined` or `null` and returns the value unchanged. Anything else is validated normally.
@@ -132,7 +183,7 @@ Profile.parse({});                    // { nickname: undefined }
 Profile.parse({ nickname: 'Ad' });     // { nickname: 'Ad' }
 ```
 
-Call `.optional()` last. It returns a base schema type, so `.min()`, `.max()` and `.email()` are no longer available after it. It also modifies the schema it is called on instead of creating a copy.
+Call `.optional()` last. It returns a base schema type, so `.min()`, `.max()`, `.email()`, `.extend()` and `.merge()` are no longer available after it.
 
 ## parse and safeParse
 
@@ -177,6 +228,8 @@ Errors are standard `Error` objects. Messages for nested values are prefixed wit
 ## Good to know
 
 **Validation stops at the first error.** You get one message per failed parse, not a list of every problem.
+
+**Schemas are immutable.** Every method returns a new schema. `s.min(3);` on its own does nothing; use `s = s.min(3)` or chain the call.
 
 **Unknown keys are dropped.** `object` returns only the keys declared in its shape.
 
