@@ -23,14 +23,23 @@ export abstract class ZynType<T> {
     }
   }
 
+  protected clone(): this {
+    const copy = Object.create(Object.getPrototypeOf(this));
+    Object.assign(copy, this);
+    copy.refinements = [...this.refinements];
+    return copy;
+  }
+
   optional(): ZynType<T | undefined> {
-    this.isOptional = true;
-    return this as unknown as ZynType<T | undefined>;
+    const copy = this.clone();
+    copy.isOptional = true;
+    return copy as unknown as ZynType<T | undefined>;
   }
 
   default(val: T): this {
-    this.defaultValue = val;
-    return this;
+    const copy = this.clone();
+    copy.defaultValue = val;
+    return copy;
   }
 
   refine(
@@ -42,8 +51,9 @@ export abstract class ZynType<T> {
         ? messageOrOptions
         : messageOrOptions?.message ||
           "Invalid input (failed custom refinement)";
-    this.refinementList.push({ check, message });
-    return this;
+    const copy = this.clone();
+    copy.refinements.push({ check, message });
+    return copy;
   }
 
   protected get refinementList() {
@@ -107,8 +117,9 @@ export class ZynString extends ZynType<string> {
       typeof messageOrOptions === "string"
         ? messageOrOptions
         : messageOrOptions?.message;
-    this.minLength = { value: length, message };
-    return this;
+    const copy = this.clone();
+    copy.minLength = { value: length, message };
+    return copy;
   }
 
   email(messageOrOptions?: string | { message?: string }): this {
@@ -116,8 +127,9 @@ export class ZynString extends ZynType<string> {
       typeof messageOrOptions === "string"
         ? messageOrOptions
         : messageOrOptions?.message;
-    this.emailCheck = { message };
-    return this;
+    const copy = this.clone();
+    copy.emailCheck = { message };
+    return copy;
   }
 }
 
@@ -153,8 +165,9 @@ export class ZynNumber extends ZynType<number> {
       typeof messageOrOptions === "string"
         ? messageOrOptions
         : messageOrOptions?.message;
-    this.minValue = { value, message };
-    return this;
+    const copy = this.clone();
+    copy.minValue = { value, message };
+    return copy;
   }
 
   max(value: number, messageOrOptions?: string | { message?: string }): this {
@@ -162,8 +175,9 @@ export class ZynNumber extends ZynType<number> {
       typeof messageOrOptions === "string"
         ? messageOrOptions
         : messageOrOptions?.message;
-    this.maxValue = { value, message };
-    return this;
+    const copy = this.clone();
+    copy.maxValue = { value, message };
+    return copy;
   }
 }
 
