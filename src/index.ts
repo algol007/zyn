@@ -3,6 +3,8 @@ export type ParseResult<T> =
   | { success: false; error: Error };
 
 export abstract class ZynType<T> {
+  protected isOptional = false;
+
   abstract parse(data: unknown): T;
 
   safeParse(data: unknown): ParseResult<T> {
@@ -15,6 +17,18 @@ export abstract class ZynType<T> {
       };
     }
   }
+
+  optional(): ZynType<T | undefined> {
+    this.isOptional = true;
+    return this as unknown as ZynType<T | undefined>;
+  }
+
+  protected handleOptional(data: unknown): boolean {
+    if (this.isOptional && (data === undefined || data === null)) {
+      return true;
+    }
+    return false;
+  }
 }
 
 // --- STRING VALIDATOR ---
@@ -23,18 +37,18 @@ export class ZynString extends ZynType<string> {
   private emailCheck = false;
 
   parse(data: unknown): string {
-    if (typeof data !== "string") {
+    if (this.handleOptional(data)) return data as any;
+
+    if (typeof data !== 'string') {
       throw new Error(`Expected string, received ${typeof data}`);
     }
     if (this.minLength !== undefined && data.length < this.minLength) {
-      throw new Error(
-        `String must be at least ${this.minLength} characters long`,
-      );
+      throw new Error(`String must be at least ${this.minLength} characters long`);
     }
     if (this.emailCheck) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(data)) {
-        throw new Error("Invalid email format");
+        throw new Error('Invalid email format');
       }
     }
     return data;
@@ -57,13 +71,13 @@ export class ZynNumber extends ZynType<number> {
   private maxValue?: number;
 
   parse(data: unknown): number {
-    if (typeof data !== "number" || Number.isNaN(data)) {
+    if (this.handleOptional(data)) return data as any;
+
+    if (typeof data !== 'number' || Number.isNaN(data)) {
       throw new Error(`Expected number, received ${typeof data}`);
     }
     if (this.minValue !== undefined && data < this.minValue) {
-      throw new Error(
-        `Number must be greater than or equal to ${this.minValue}`,
-      );
+      throw new Error(`Number must be greater than or equal to ${this.minValue}`);
     }
     if (this.maxValue !== undefined && data > this.maxValue) {
       throw new Error(`Number must be less than or equal to ${this.maxValue}`);
@@ -82,20 +96,55 @@ export class ZynNumber extends ZynType<number> {
   }
 }
 
+// --- BOOLEAN VALIDATOR ---
+export class ZynBoolean extends ZynType<boolean> {
+  parse(data: unknown): boolean {
+    if (this.handleOptional(data)) return data as any;
+
+    if (typeof data !== 'boolean') {
+      throw new Error(`Expected boolean, received ${typeof data}`);
+    }
+    return data;
+  }
+}
+
+// --- ARRAY VALIDATOR ---
+export class ZynArray<T extends ZynType<any>> extends ZynType<Infer<T>[]> {
+  constructor(private itemType: T) {
+    super();
+  }
+
+  parse(data: unknown): Infer<T>[] {
+    if (this.handleOptional(data)) return data as any;
+
+    if (!Array.isArray(data)) {
+      throw new Error(`Expected array, received ${typeof data}`);
+    }
+
+    return data.map((item, index) => {
+      try {
+        return this.itemType.parse(item);
+      } catch (err: any) {
+        throw new Error(`At index ${index}: ${err.message}`);
+      }
+    });
+  }
+}
+
 // --- OBJECT VALIDATOR ---
 type InferObject<T extends Record<string, ZynType<any>>> = {
   [K in keyof T]: T[K] extends ZynType<infer U> ? U : never;
 };
 
-export class ZynObject<T extends Record<string, ZynType<any>>> extends ZynType<
-  InferObject<T>
-> {
+export class ZynObject<T extends Record<string, ZynType<any>>> extends ZynType<InferObject<T>> {
   constructor(private shape: T) {
     super();
   }
 
   parse(data: unknown): InferObject<T> {
-    if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    if (this.handleOptional(data)) return data as any;
+
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
       throw new Error(`Expected object, received ${typeof data}`);
     }
 
@@ -103,7 +152,11 @@ export class ZynObject<T extends Record<string, ZynType<any>>> extends ZynType<
     const inputObj = data as Record<string, any>;
 
     for (const key in this.shape) {
-      result[key] = this.shape[key].parse(inputObj[key]);
+      try {
+        result[key] = this.shape[key].parse(inputObj[key]);
+      } catch (err: any) {
+        throw new Error(`At key "${key}": ${err.message}`);
+      }
     }
 
     return result as InferObject<T>;
@@ -114,9 +167,9 @@ export class ZynObject<T extends Record<string, ZynType<any>>> extends ZynType<
 export const zyn = {
   string: () => new ZynString(),
   number: () => new ZynNumber(),
-  object: <T extends Record<string, ZynType<any>>>(shape: T) =>
-    new ZynObject(shape),
+  boolean: () => new ZynBoolean(),
+  array: <T extends ZynType<any>>(itemType: T) => new ZynArray(itemType),
+  object: <T extends Record<string, ZynType<any>>>(shape: T) => new ZynObject(shape),
 };
 
-export type Infer<T extends ZynType<any>> =
-  T extends ZynType<infer U> ? U : never;
+export type Infer<T extends ZynType<any>> = T extends ZynType<infer U> ? U : never;
