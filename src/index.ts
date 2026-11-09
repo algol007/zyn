@@ -4,6 +4,11 @@ export type ParseResult<T> =
 
 export abstract class ZynType<T> {
   protected isOptional = false;
+  protected defaultValue?: T;
+  protected refinements: Array<{
+    check: (value: T) => boolean;
+    message: string;
+  }> = [];
 
   abstract parse(data: unknown): T;
 
@@ -23,75 +28,141 @@ export abstract class ZynType<T> {
     return this as unknown as ZynType<T | undefined>;
   }
 
-  protected handleOptional(data: unknown): boolean {
-    if (this.isOptional && (data === undefined || data === null)) {
-      return true;
+  default(val: T): this {
+    this.defaultValue = val;
+    return this;
+  }
+
+  refine(
+    check: (value: T) => boolean,
+    messageOrOptions?: string | { message?: string },
+  ): this {
+    const message =
+      typeof messageOrOptions === "string"
+        ? messageOrOptions
+        : messageOrOptions?.message ||
+          "Invalid input (failed custom refinement)";
+    this.refinementList.push({ check, message });
+    return this;
+  }
+
+  protected get refinementList() {
+    return this.refinements;
+  }
+
+  protected handleOptionalAndDefault(data: unknown): {
+    handled: boolean;
+    value?: T;
+  } {
+    if (data === undefined || data === null) {
+      if (this.defaultValue !== undefined) {
+        return { handled: true, value: this.defaultValue };
+      }
+      if (this.isOptional) {
+        return { handled: true, value: undefined as any };
+      }
     }
-    return false;
+    return { handled: false };
+  }
+
+  protected runRefinements(value: T): T {
+    for (const ref of this.refinementList) {
+      if (!ref.check(value)) {
+        throw new Error(ref.message);
+      }
+    }
+    return value;
   }
 }
 
 // --- STRING VALIDATOR ---
 export class ZynString extends ZynType<string> {
-  private minLength?: number;
-  private emailCheck = false;
+  private minLength?: { value: number; message?: string };
+  private emailCheck?: { message?: string };
 
   parse(data: unknown): string {
-    if (this.handleOptional(data)) return data as any;
+    const opt = this.handleOptionalAndDefault(data);
+    if (opt.handled) return opt.value as string;
 
-    if (typeof data !== 'string') {
+    if (typeof data !== "string") {
       throw new Error(`Expected string, received ${typeof data}`);
     }
-    if (this.minLength !== undefined && data.length < this.minLength) {
-      throw new Error(`String must be at least ${this.minLength} characters long`);
+    if (this.minLength !== undefined && data.length < this.minLength.value) {
+      throw new Error(
+        this.minLength.message ||
+          `String must be at least ${this.minLength.value} characters long`,
+      );
     }
     if (this.emailCheck) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(data)) {
-        throw new Error('Invalid email format');
+        throw new Error(this.emailCheck.message || "Invalid email format");
       }
     }
-    return data;
+    return this.runRefinements(data);
   }
 
-  min(length: number): this {
-    this.minLength = length;
+  min(length: number, messageOrOptions?: string | { message?: string }): this {
+    const message =
+      typeof messageOrOptions === "string"
+        ? messageOrOptions
+        : messageOrOptions?.message;
+    this.minLength = { value: length, message };
     return this;
   }
 
-  email(): this {
-    this.emailCheck = true;
+  email(messageOrOptions?: string | { message?: string }): this {
+    const message =
+      typeof messageOrOptions === "string"
+        ? messageOrOptions
+        : messageOrOptions?.message;
+    this.emailCheck = { message };
     return this;
   }
 }
 
 // --- NUMBER VALIDATOR ---
 export class ZynNumber extends ZynType<number> {
-  private minValue?: number;
-  private maxValue?: number;
+  private minValue?: { value: number; message?: string };
+  private maxValue?: { value: number; message?: string };
 
   parse(data: unknown): number {
-    if (this.handleOptional(data)) return data as any;
+    const opt = this.handleOptionalAndDefault(data);
+    if (opt.handled) return opt.value as number;
 
-    if (typeof data !== 'number' || Number.isNaN(data)) {
+    if (typeof data !== "number" || Number.isNaN(data)) {
       throw new Error(`Expected number, received ${typeof data}`);
     }
-    if (this.minValue !== undefined && data < this.minValue) {
-      throw new Error(`Number must be greater than or equal to ${this.minValue}`);
+    if (this.minValue !== undefined && data < this.minValue.value) {
+      throw new Error(
+        this.minValue.message ||
+          `Number must be greater than or equal to ${this.minValue.value}`,
+      );
     }
-    if (this.maxValue !== undefined && data > this.maxValue) {
-      throw new Error(`Number must be less than or equal to ${this.maxValue}`);
+    if (this.maxValue !== undefined && data > this.maxValue.value) {
+      throw new Error(
+        this.maxValue.message ||
+          `Number must be less than or equal to ${this.maxValue.value}`,
+      );
     }
-    return data;
+    return this.runRefinements(data);
   }
 
-  min(value: number): this {
-    this.minValue = value;
+  min(value: number, messageOrOptions?: string | { message?: string }): this {
+    const message =
+      typeof messageOrOptions === "string"
+        ? messageOrOptions
+        : messageOrOptions?.message;
+    this.minValue = { value, message };
     return this;
   }
 
-  max(value: number): this {
-    this.maxValue = value;
+  max(value: number, messageOrOptions?: string | { message?: string }): this {
+    const message =
+      typeof messageOrOptions === "string"
+        ? messageOrOptions
+        : messageOrOptions?.message;
+    this.maxValue = { value, message };
     return this;
   }
 }
@@ -99,12 +170,34 @@ export class ZynNumber extends ZynType<number> {
 // --- BOOLEAN VALIDATOR ---
 export class ZynBoolean extends ZynType<boolean> {
   parse(data: unknown): boolean {
-    if (this.handleOptional(data)) return data as any;
+    const opt = this.handleOptionalAndDefault(data);
+    if (opt.handled) return opt.value as boolean;
 
-    if (typeof data !== 'boolean') {
+    if (typeof data !== "boolean") {
       throw new Error(`Expected boolean, received ${typeof data}`);
     }
-    return data;
+    return this.runRefinements(data);
+  }
+}
+
+// --- ENUM VALIDATOR ---
+export class ZynEnum<T extends readonly [string, ...string[]]> extends ZynType<
+  T[number]
+> {
+  constructor(private values: T) {
+    super();
+  }
+
+  parse(data: unknown): T[number] {
+    const opt = this.handleOptionalAndDefault(data);
+    if (opt.handled) return opt.value as T[number];
+
+    if (typeof data !== "string" || !this.values.includes(data as any)) {
+      throw new Error(
+        `Expected one of [${this.values.join(", ")}], received '${data}'`,
+      );
+    }
+    return this.runRefinements(data as T[number]);
   }
 }
 
@@ -115,19 +208,22 @@ export class ZynArray<T extends ZynType<any>> extends ZynType<Infer<T>[]> {
   }
 
   parse(data: unknown): Infer<T>[] {
-    if (this.handleOptional(data)) return data as any;
+    const opt = this.handleOptionalAndDefault(data);
+    if (opt.handled) return opt.value as Infer<T>[];
 
     if (!Array.isArray(data)) {
       throw new Error(`Expected array, received ${typeof data}`);
     }
 
-    return data.map((item, index) => {
+    const result = data.map((item, index) => {
       try {
         return this.itemType.parse(item);
       } catch (err: any) {
         throw new Error(`At index ${index}: ${err.message}`);
       }
     });
+
+    return this.runRefinements(result);
   }
 }
 
@@ -136,15 +232,18 @@ type InferObject<T extends Record<string, ZynType<any>>> = {
   [K in keyof T]: T[K] extends ZynType<infer U> ? U : never;
 };
 
-export class ZynObject<T extends Record<string, ZynType<any>>> extends ZynType<InferObject<T>> {
+export class ZynObject<T extends Record<string, ZynType<any>>> extends ZynType<
+  InferObject<T>
+> {
   constructor(private shape: T) {
     super();
   }
 
   parse(data: unknown): InferObject<T> {
-    if (this.handleOptional(data)) return data as any;
+    const opt = this.handleOptionalAndDefault(data);
+    if (opt.handled) return opt.value as InferObject<T>;
 
-    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    if (typeof data !== "object" || data === null || Array.isArray(data)) {
       throw new Error(`Expected object, received ${typeof data}`);
     }
 
@@ -159,7 +258,35 @@ export class ZynObject<T extends Record<string, ZynType<any>>> extends ZynType<I
       }
     }
 
-    return result as InferObject<T>;
+    return this.runRefinements(result as InferObject<T>);
+  }
+}
+
+// --- COERCE VALIDATORS ---
+export class ZynCoerceString extends ZynString {
+  override parse(data: unknown): string {
+    if (data !== undefined && data !== null && typeof data !== "string") {
+      return super.parse(String(data));
+    }
+    return super.parse(data);
+  }
+}
+
+export class ZynCoerceNumber extends ZynNumber {
+  override parse(data: unknown): number {
+    if (typeof data === "string" && data.trim() !== "") {
+      const parsed = Number(data);
+      return super.parse(parsed);
+    }
+    return super.parse(data);
+  }
+}
+
+export class ZynCoerceBoolean extends ZynBoolean {
+  override parse(data: unknown): boolean {
+    if (data === "true" || data === 1) return super.parse(true);
+    if (data === "false" || data === 0) return super.parse(false);
+    return super.parse(data);
   }
 }
 
@@ -168,8 +295,19 @@ export const zyn = {
   string: () => new ZynString(),
   number: () => new ZynNumber(),
   boolean: () => new ZynBoolean(),
+  enum: <T extends readonly [string, ...string[]]>(values: T) =>
+    new ZynEnum(values),
   array: <T extends ZynType<any>>(itemType: T) => new ZynArray(itemType),
-  object: <T extends Record<string, ZynType<any>>>(shape: T) => new ZynObject(shape),
+  object: <T extends Record<string, ZynType<any>>>(shape: T) =>
+    new ZynObject(shape),
+
+  // Coercion namespace
+  coerce: {
+    string: () => new ZynCoerceString(),
+    number: () => new ZynCoerceNumber(),
+    boolean: () => new ZynCoerceBoolean(),
+  },
 };
 
-export type Infer<T extends ZynType<any>> = T extends ZynType<infer U> ? U : never;
+export type Infer<T extends ZynType<any>> =
+  T extends ZynType<infer U> ? U : never;
